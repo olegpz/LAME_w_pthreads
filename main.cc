@@ -8,7 +8,7 @@
 #include <ctime>
 #include "dirent.h"	/* this is used to get cross-platform directory listings without Boost. */
 
-//#include "lame_interface.h"
+#include <stdio.h>
 #include <vector>
 #include <sstream>
 #include "lame.h"
@@ -29,7 +29,7 @@ static pthread_mutex_t mutFilesFinished = PTHREAD_MUTEX_INITIALIZER;
 using namespace std;
 
 /*
- * POSIX-conforming argument struct for worker routine 'complete_encode_worker'.
+ * POSIX-conforming argument struct for worker routine 'lame_encoder'.
  */
 typedef struct {
 	vector<string> *pFilenames;
@@ -39,50 +39,35 @@ typedef struct {
 	int iProcessedFiles;
 } ENC_WRK_ARGS;
 
-/* Used for filtering filename extensions. Returns true if 'fullString' ends with
- * 'subString', otherwise false.
- */
-bool string_ends_with(const string &fullString, const string &subString)
+/* Parse a directory <dirname> and return a list of
+ * filenames within this directory. */
+vector<string> parse_directory(const char *dirname)
 {
-	if (subString.length() > fullString.length()) return false;
-	else {
-		// lowercase conversion
-		string fullString_l = fullString;
-		for (unsigned int i = 0; i < fullString_l.length(); i++) {
-			if ('A' <= fullString_l[i] && fullString_l[i] <= 'Z')
-				fullString_l[i] = fullString_l[i] - ('Z' - 'z');
-		}
-		string subString_l = subString;
-		for (unsigned int i = 0; i < subString_l.length(); i++) {
-			if ('A' <= subString_l[i] && subString_l[i] <= 'Z')
-				subString_l[i] = subString_l[i] - ('Z' - 'z');
-		}
-		return (fullString_l.compare(fullString_l.length() - subString_l.length(), subString_l.length(),
-			subString_l) == 0);
-	}
-}
+    struct dirent *de;  // Pointer for directory entry
+    vector<string> dirEnt;
+    DIR *dr = opendir(dirname);
+ 
+    if (dr == NULL) {
+        printf("Could not open current directory\n");
+	    return dirEnt;
+    }
+ 
+    // http://pubs.opengroup.org/onlinepubs/7990989775/xsh/readdir.html
+    printf("\n--- dir <%s>::\n", dirname);
+    while ((de = readdir(dr)) != NULL) {
+            int len = strlen(de->d_name);
+            //printf("len = %d\n", len);
+            if (len > 4)
+                if (!strcmp(de->d_name+len-3, "wav")) {
+                    dirEnt.push_back(string(dirname) + string(PATHSEP) + string(de->d_name));
+                    printf("%s\n", de->d_name);
+                }
+    }
+    printf("--- Found %ld WAV file(s)\n\n", dirEnt.size());
+ 
+    closedir(dr);
 
-/* Parse a directory given by dirname and return a list of
- * filenames and subfolders within this directory. 
- */
-list<string> parse_directory(const char *dirname)
-{
-	DIR *dir;
-	dirent *ent;
-	list<string> dirEntries;
-
-	if ((dir = opendir(dirname)) != NULL) {
-		// list directory
-		while ((ent = readdir(dir)) != NULL) {
-			dirEntries.push_back(string(ent->d_name));
-		}
-		closedir(dir);
-	} else {
-		cerr << "FATAL: Unable to parse directory." << endl;
-		exit(1);
-	}
-
-	return dirEntries;
+	return dirEnt;
 }
 
 /* encode_to_file
@@ -129,13 +114,13 @@ int encode_to_file(lame_global_flags *gfp, const FMT_DATA *hdr, const short *lef
 	return 0;
 }
 
-/* complete_encode_worker
+/* lame_encoder
  *  Main worker thread routine which is supplied with a list of filenames, a status array indicating which files
  *  are already worked upon, and some additional info via a ENC_WRK_ARGS struct.
  *  As long as there are still unprocessed filenames, this routine will fetch the next free filename, mark it as
  *  processed, and execute the complete conversion from reading .wav to writing .mp3.
  */
-void *complete_encode_worker(void* arg)
+void *lame_encoder(void* arg)
 {
 	int ret;
 	ENC_WRK_ARGS *args = (ENC_WRK_ARGS*)arg; // parse argument struct
@@ -230,22 +215,14 @@ int main(int argc, char **argv)
 	printf("LAME version: %s\n", get_lame_version());
 
 	// parse directory
-	list<string> files = parse_directory(argv[1]);
-	vector<string> wavFiles;
-	for (list<string>::iterator it = files.begin(); it != files.end(); it++) {
-		// check if it's a wave file and add path
-		if (string_ends_with(*it, string(".wav"))) {
-			wavFiles.push_back(string(argv[1]) + string(PATHSEP) + *it);
-		}
-	}
-	int nfiles = wavFiles.size();
+	vector<string> wavfiles = parse_directory(argv[1]);
+	int nfiles = wavfiles.size();
     nprocs = min(nprocs, nfiles);
 
-	printf("Found %d .wav file(s) in directory.", nfiles);
 	if (!nfiles) return 0;
 
 	// initialize pbFilesFinished array which contains true for all files which are currently already converted
-	bool *pbFilesFinished = new bool[nfiles];
+	bool pbFilesFinished[nfiles];
 	for (int i = 0; i < nfiles; i++) pbFilesFinished[i] = false;
 
 
@@ -254,7 +231,7 @@ int main(int argc, char **argv)
 	ENC_WRK_ARGS *threadArgs = (ENC_WRK_ARGS*)malloc(nprocs * sizeof(ENC_WRK_ARGS));
 	for (int i = 0; i < nprocs; i++) {
 		threadArgs[i].iNfiles = nfiles;
-		threadArgs[i].pFilenames = &wavFiles;
+		threadArgs[i].pFilenames = &wavfiles;
 		threadArgs[i].pbFilesFinished = pbFilesFinished;
 		threadArgs[i].iThreadId = i;
 		threadArgs[i].iProcessedFiles = 0;
@@ -264,7 +241,7 @@ int main(int argc, char **argv)
 
 	// create worker threads
 	for (int i = 0; i < nprocs; i++) {
-		pthread_create(&threads[i], NULL, complete_encode_worker, (void*)&threadArgs[i]);
+		pthread_create(&threads[i], NULL, lame_encoder, (void*)&threadArgs[i]);
 	}
 
 	// synchronize / join threads
