@@ -10,20 +10,20 @@ int read_wave_header(FILE *file, FMT_DATA *&wav_hdr, int &wav_data_sz, int &wav_
 
 	// read and validate RIFF header first
 	RIFF_HDR riff_hdr;
-	fread((char*)&riff_hdr, sizeof(RIFF_HDR), 1, file);
+	fread(&riff_hdr, sizeof(RIFF_HDR), 1, file);
 	if (EXIT_SUCCESS != check_riff_header(&riff_hdr))
 		return EXIT_FAILURE;
 
 	// then continue parsing file until we find the 'fmt ' chunk
 	bool fmt = false;
 	while (!fmt && !feof(file)) {
-		fread((char*)&chunk_hdr, sizeof(ANY_CHUNK_HDR), 1, file);
+		fread(&chunk_hdr, sizeof(ANY_CHUNK_HDR), 1, file);
 		if (0 == strncmp(chunk_hdr.ID, "fmt ", 4)) {
 			// rewind and parse the complete chunk
 			fseek(file, (int)ftell(file)-sizeof(ANY_CHUNK_HDR), SEEK_SET);
 			
 			wav_hdr = new FMT_DATA;
-			fread((char*)wav_hdr, sizeof(FMT_DATA), 1, file);
+			fread(wav_hdr, sizeof(FMT_DATA), 1, file);
 			fmt = true;
 			break;
 		} else {
@@ -41,9 +41,7 @@ int read_wave_header(FILE *file, FMT_DATA *&wav_hdr, int &wav_data_sz, int &wav_
 	// finally, look for 'data' chunk
 	bool data = false;
 	while (!data && !feof(file)) {
-		//printf("Reading chunk at 0x%X:", (int)file.tellg());
 		fread(&chunk_hdr, sizeof(ANY_CHUNK_HDR), 1, file);
-		//printf("%s\n", string(chunk_hdr.ID, 4).c_str());
 		if (0 == strncmp(chunk_hdr.ID, "data", 4)) {
 			data = true;
 			wav_data_sz = chunk_hdr.chunk_size;
@@ -109,12 +107,12 @@ void get_pcm_channels_from_wave(FILE *file, const FMT_DATA* wav_hdr, short* &wav
 	fseek(file, wav_offset, SEEK_SET);// set file pointer to beginning of data array
 
 	if (wav_hdr->num_channels == 1) {
-		fread((char*)wav_left, wav_hdr->block_align, numSamples, file);
+		fread((void*)wav_left, wav_hdr->block_align, numSamples, file);
 	} else {
 		for (idx = 0; idx < numSamples; idx++) {
-			fread((char*)&wav_left[idx], wav_hdr->block_align / wav_hdr->num_channels, 1, file);
+			fread((void*)&wav_left[idx], wav_hdr->block_align / wav_hdr->num_channels, 1, file);
 			if (wav_hdr->num_channels>1)
-				fread((char*)&wav_right[idx], wav_hdr->block_align / wav_hdr->num_channels, 1, file);
+				fread((void*)&wav_right[idx], wav_hdr->block_align / wav_hdr->num_channels, 1, file);
 		}
 	}
 
