@@ -1,152 +1,139 @@
 #include "wave.h"
 
 // function implementations
-int read_wave_header(ifstream &file, FMT_DATA *&hdr, int &iDataSize, int &iDataOffset)
+int read_wave_header(FILE *file, FMT_DATA *&wav_hdr, int &wav_data_sz, int &wav_offset)
 {
-	if (!file.is_open()) return EXIT_FAILURE; // check if file is open
-	file.seekg(0, ios::beg); // rewind file
+	if (!file) return EXIT_FAILURE; // check if file is open
+	fseek(file, 0, SEEK_SET); // rewind file
 
-	ANY_CHUNK_HDR chunkHdr;
+	ANY_CHUNK_HDR chunk_hdr;
 
 	// read and validate RIFF header first
-	RIFF_HDR rHdr;
-	file.read((char*)&rHdr, sizeof(RIFF_HDR));
-	if (EXIT_SUCCESS != check_riff_header(&rHdr))
+	RIFF_HDR riff_hdr;
+	fread((char*)&riff_hdr, sizeof(RIFF_HDR), 1, file);
+	if (EXIT_SUCCESS != check_riff_header(&riff_hdr))
 		return EXIT_FAILURE;
 
 	// then continue parsing file until we find the 'fmt ' chunk
-	bool bFoundFmt = false;
-	while (!bFoundFmt && !file.eof()) {
-		file.read((char*)&chunkHdr, sizeof(ANY_CHUNK_HDR));
-		if (0 == strncmp(chunkHdr.ID, "fmt ", 4)) {
+	bool fmt = false;
+	while (!fmt && !feof(file)) {
+		fread((char*)&chunk_hdr, sizeof(ANY_CHUNK_HDR), 1, file);
+		if (0 == strncmp(chunk_hdr.ID, "fmt ", 4)) {
 			// rewind and parse the complete chunk
-			file.seekg((int)file.tellg()-sizeof(ANY_CHUNK_HDR));
+			fseek(file, (int)ftell(file)-sizeof(ANY_CHUNK_HDR), SEEK_SET);
 			
-			hdr = new FMT_DATA;
-			file.read((char*)hdr, sizeof(FMT_DATA));
-			bFoundFmt = true;
+			wav_hdr = new FMT_DATA;
+			fread((char*)wav_hdr, sizeof(FMT_DATA), 1, file);
+			fmt = true;
 			break;
 		} else {
-			// skip this chunk (i.e. the next chunkSize bytes)
-			file.seekg(chunkHdr.chunkSize, ios::cur);
+			// skip this chunk (i.e. the next chunk_size bytes)
+			fseek(file, chunk_hdr.chunk_size, SEEK_CUR);
 		}
 	}
-	if (!bFoundFmt) { // found 'fmt ' at all?
-		cerr << "FATAL: Found no 'fmt ' chunk in file." << endl;
-	} else if (EXIT_SUCCESS != check_format_data(hdr)) { // if so, check settings
-		delete hdr;
+	if (!fmt) { // found 'fmt ' at all?
+		fprintf(stderr, "FATAL: Found no 'fmt ' chunk in file.\n");
+	} else if (EXIT_SUCCESS != check_format_data(wav_hdr)) { // if so, check settings
+		delete wav_hdr;
 		return EXIT_FAILURE;
 	}
 
 	// finally, look for 'data' chunk
-	bool bFoundData = false;
-	while (!bFoundData && !file.eof()) {
+	bool data = false;
+	while (!data && !feof(file)) {
 		//printf("Reading chunk at 0x%X:", (int)file.tellg());
-		file.read((char*)&chunkHdr, sizeof(ANY_CHUNK_HDR));
-		//printf("%s\n", string(chunkHdr.ID, 4).c_str());
-		if (0 == strncmp(chunkHdr.ID, "data", 4)) {
-			bFoundData = true;
-			iDataSize = chunkHdr.chunkSize;
-			iDataOffset = file.tellg();
+		fread(&chunk_hdr, sizeof(ANY_CHUNK_HDR), 1, file);
+		//printf("%s\n", string(chunk_hdr.ID, 4).c_str());
+		if (0 == strncmp(chunk_hdr.ID, "data", 4)) {
+			data = true;
+			wav_data_sz = chunk_hdr.chunk_size;
+			wav_offset = ftell(file);
 			break;
 		} else { // skip chunk
-			file.seekg(chunkHdr.chunkSize, ios::cur);
+			fseek(file, chunk_hdr.chunk_size, SEEK_CUR);
 		}
 	}
-	if (!bFoundData) { // found 'data' at all?
-		cerr << "FATAL: Found no 'data' chunk in file." << endl;
-		delete hdr;
+	if (!data) { // found 'data' at all?
+		fprintf(stderr, "FATAL: Found no 'data' chunk in file.\n");
+		delete wav_hdr;
 		return EXIT_FAILURE;
 	}
 
 	return EXIT_SUCCESS;
 }
 
-int check_format_data(const FMT_DATA *hdr)
+int check_format_data(const FMT_DATA *wav_hdr)
 {
-	if (hdr->wFmtTag != 0x01) {
-		cerr << "Bad non-PCM format:" << hdr->wFmtTag << endl;
+	if (wav_hdr->tag != 0x01) {
+		fprintf(stderr, "Bad non-PCM format: %x\n", wav_hdr->tag);
 		return EXIT_FAILURE;
 	}
-	if (hdr->wChannels != 1 && hdr->wChannels != 2) {
-		cerr << "Bad number of channels (only mono or stereo supported)." << endl;
+	if (wav_hdr->num_channels != 1 && wav_hdr->num_channels != 2) {
+		fprintf(stderr, "Bad number of channels (only mono or stereo supported).\n");
 		return EXIT_FAILURE;
 	}
-	if (hdr->chunkSize != 16) {
-		cerr << "WARNING: 'fmt ' chunk size seems to be off." << endl;
+	if (wav_hdr->chunk_size != 16) {
+		fprintf(stderr, "WARNING: 'fmt ' chunk size seems to be off.");
 	}
-	if (hdr->wBlockAlign != hdr->wBitsPerSample * hdr->wChannels / 8) {
-		cerr << "WARNING: 'fmt ' has strange bytes/bits/channels configuration." << endl;
+	if (wav_hdr->block_align != wav_hdr->bits * wav_hdr->num_channels / 8) {
+		fprintf(stderr, "WARNING: 'fmt ' has strange bytes/bits/channels configuration.");
 	}
 	
 	return EXIT_SUCCESS;
 }
 
-int check_riff_header(const RIFF_HDR *rHdr)
+int check_riff_header(const RIFF_HDR *riff_hdr)
 {
-	if (0 == strncmp(rHdr->rID, "RIFF", 4) && 0 == strncmp(rHdr->wID, "WAVE", 4) && rHdr->fileLen > 0)
+	if (0 == strncmp(riff_hdr->riffID, "RIFF", 4) && 0 == strncmp(riff_hdr->wavID, "WAVE", 4) && riff_hdr->file_len > 0)
 		return EXIT_SUCCESS;
 
-	cerr << "Bad RIFF header!" << endl;
+	fprintf(stderr, "Bad RIFF header!");
 	return EXIT_FAILURE;
 }
 
-void get_pcm_channels_from_wave(ifstream &file, const FMT_DATA* hdr, short* &leftPcm, short* &rightPcm, const int iDataSize,
-	const int iDataOffset)
+void get_pcm_channels_from_wave(FILE *file, const FMT_DATA* wav_hdr, short* &wav_left, short* &wav_right, const int wav_data_sz,
+	const int wav_offset)
 {
 	int idx;
-	int numSamples = iDataSize / hdr->wBlockAlign;
+	int numSamples = wav_data_sz / wav_hdr->block_align;
 
-	leftPcm = NULL;
-	rightPcm = NULL;
+	wav_left  = NULL;
+	wav_right = NULL;
 
 	// allocate PCM arrays
-	leftPcm = new short[iDataSize / hdr->wChannels / sizeof(short)];
-	if (hdr->wChannels > 1)
-		rightPcm = new short[iDataSize / hdr->wChannels / sizeof(short)];
+	wav_left = new short[wav_data_sz / wav_hdr->num_channels / sizeof(short)];
+	if (wav_hdr->num_channels > 1)
+		wav_right = new short[wav_data_sz / wav_hdr->num_channels / sizeof(short)];
 
 	// capture each sample
-	file.seekg(iDataOffset);// set file pointer to beginning of data array
+	fseek(file, wav_offset, SEEK_SET);// set file pointer to beginning of data array
 
-	if (hdr->wChannels == 1) {
-		file.read((char*)leftPcm, hdr->wBlockAlign * numSamples);
+	if (wav_hdr->num_channels == 1) {
+		fread((char*)wav_left, wav_hdr->block_align, numSamples, file);
 	} else {
 		for (idx = 0; idx < numSamples; idx++) {
-			file.read((char*)&leftPcm[idx], hdr->wBlockAlign / hdr->wChannels);
-			if (hdr->wChannels>1)
-				file.read((char*)&rightPcm[idx], hdr->wBlockAlign / hdr->wChannels);
+			fread((char*)&wav_left[idx], wav_hdr->block_align / wav_hdr->num_channels, 1, file);
+			if (wav_hdr->num_channels>1)
+				fread((char*)&wav_right[idx], wav_hdr->block_align / wav_hdr->num_channels, 1, file);
 		}
 	}
 
-	assert(rightPcm == NULL || hdr->wChannels != 1);
+	assert(wav_right == NULL || wav_hdr->num_channels != 1);
 
-#ifdef __VERBOSE_
-	cout << "File parsed successfully." << endl;
-#endif
 }
 
-int read_wave(const char *filename, FMT_DATA* &hdr, short* &leftPcm, short* &rightPcm, int &iDataSize)
+int read_wave(const char *filename, FMT_DATA* &wav_hdr, short* &wav_left, short* &wav_right, int &wav_data_sz)
 {
-#ifdef __VERBOSE_
-	streamoff size;
-#endif
 
-	ifstream inFile(filename, ios::in | ios::binary);
-	if (inFile.is_open()) {
-		// determine size and allocate buffer
-		inFile.seekg(0, ios::end);
-#ifdef __VERBOSE_
-		size = inFile.tellg();
-		cout << "Opened file. Allocating " << size << " bytes." << endl;
-#endif
-
+	FILE *wav_file = fopen(filename, "rb");
+	if (wav_file) {
 		// parse file
-		int iDataOffset = 0;
-		if (EXIT_SUCCESS != read_wave_header(inFile, hdr, iDataSize, iDataOffset)) {
+		int wav_offset = 0;
+		if (EXIT_SUCCESS != read_wave_header(wav_file, wav_hdr, wav_data_sz, wav_offset)) {
 			return EXIT_FAILURE;
 		}
-		get_pcm_channels_from_wave(inFile, hdr, leftPcm, rightPcm, iDataSize, iDataOffset);
-		inFile.close();
+		get_pcm_channels_from_wave(wav_file, wav_hdr, wav_left, wav_right, wav_data_sz, wav_offset);
+		fclose(wav_file);
 
 		// cleanup and return
 		return EXIT_SUCCESS;

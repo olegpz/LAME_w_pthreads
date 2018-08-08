@@ -88,22 +88,23 @@ void *lame_encoder(void* arg)
         const char* wav_filename = wav.c_str();
 		const char* mp3_filename = mp3.c_str();
 
-		FMT_DATA *hdr = NULL;
-        short *left = NULL, *right = NULL;
+		FMT_DATA *wav_hdr = NULL;
+        short *wav_left = NULL, *wav_right = NULL;
 		// init encoding params
 		lame_global_flags *gfp = lame_init();
 		lame_set_quality(gfp, 5); // good quality level
 
 		// parse wav file
-		int data_sz = -1;
-		ret = read_wave(wav_filename, hdr, left, right, data_sz);
+		int wav_data_sz = -1;
+		ret = read_wave(wav_filename, wav_hdr, wav_left, wav_right, wav_data_sz);
 		if (ret) {
 			fprintf(stderr, "Error in file %s. Skipping.\n\n", wav_filename);
 			continue;
 		}
 
-		lame_set_num_channels(gfp, hdr->wChannels);
-		lame_set_num_samples(gfp, data_sz / hdr->wBlockAlign);
+        int num_samples = wav_data_sz / wav_hdr->block_align;
+		lame_set_num_channels(gfp, wav_hdr->num_channels);
+		lame_set_num_samples(gfp, num_samples);
 
 		ret = lame_init_params(gfp);
 		if (ret != 0) {
@@ -112,40 +113,39 @@ void *lame_encoder(void* arg)
 		}
 
 
-        int numSamples = data_sz / hdr->wBlockAlign;
-        int mp3BufferSize = numSamples * 5 / 4 + 7200; // worst case estimate
-        unsigned char *mp3Buffer = (unsigned char*)malloc(mp3BufferSize);
+        int mp3_buffer_sz = num_samples * 5 / 4 + 7200; // worst case estimate
+        unsigned char *mp3_buf = (unsigned char*)malloc(mp3_buffer_sz);
 
         // call to lame
-        int mp3size = lame_encode_buffer(gfp, (short*)left, (short*)right, numSamples, mp3Buffer, mp3BufferSize);
+        int mp3size = lame_encode_buffer(gfp, (short*)wav_left, (short*)wav_right, num_samples, mp3_buf, mp3_buffer_sz);
 
         if (!(mp3size > 0)) {
-            free(mp3Buffer);
+            free(mp3_buf);
             fprintf(stderr, "No data was encoded. Return code: %d\n", mp3size);
             fprintf(stderr, "Unable to encode mp3: %s\n\n", mp3_filename);
             continue;
         }
 
         // write to file
-        FILE *out = fopen(mp3_filename, "wb+");
-        fwrite((void*)mp3Buffer, sizeof(unsigned char), mp3size, out);
-        int flushSize = lame_encode_flush(gfp, mp3Buffer, mp3BufferSize);
-        fwrite((void*)mp3Buffer, sizeof(unsigned char), flushSize, out);
+        FILE *mp3_file = fopen(mp3_filename, "wb+");
+        fwrite((void*)mp3_buf, sizeof(unsigned char), mp3size, mp3_file);
+        int flush_size = lame_encode_flush(gfp, mp3_buf, mp3_buffer_sz);
+        fwrite((void*)mp3_buf, sizeof(unsigned char), flush_size, mp3_file);
 
         // might be omitted
-        lame_mp3_tags_fid(gfp, out);
+        lame_mp3_tags_fid(gfp, mp3_file);
 
-        fclose(out);
-        free(mp3Buffer);
+        fclose(mp3_file);
+        free(mp3_buf);
 
 
 		printf("[Thread:%i -- %s]\n", args->th_id, mp3_filename);
-		++args->num_enc;
+		args->num_enc++;
 
 		lame_close(gfp);
-		if  (left != NULL) free(left);
-		if (right != NULL) free(right);
-		if  (hdr  != NULL) free(hdr);
+		if (wav_left  != NULL) free(wav_left);
+		if (wav_right != NULL) free(wav_right);
+		if (wav_hdr   != NULL) free(wav_hdr);
 	}
 
 	pthread_exit(NULL);
@@ -155,11 +155,7 @@ void *lame_encoder(void* arg)
 int main(int argc, char **argv)
 {
      // use all available CPU cores for the encoding process in an efficient way by utilizing multi-threading
-#ifdef WIN32
 	int nprocs = get_nprocs();
-#else
-	int nprocs = 2;
-#endif
 	if (argc < 2) {
 		printf("Usage: %s <PATH_NAME>\n", argv[0]);
 		printf("\tall WAV-files contained in the <PATH_NAME> are to be encoded to MP3\n");
@@ -210,7 +206,7 @@ int main(int argc, char **argv)
 		iProcessedTotal += enc_args[i].num_enc;
 	}
 
-	printf("\nEncoded %d out of %d files in total in %g sec.\n", iProcessedTotal, nfiles, double(end_clk - start_clk) / CLOCKS_PER_SEC);
+	printf("\nEncoded %d mp3_file of %d files in total in %g sec.\n", iProcessedTotal, nfiles, double(end_clk - start_clk) / CLOCKS_PER_SEC);
 
 	free(thread);
 	free(enc_args);
