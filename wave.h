@@ -21,13 +21,13 @@ typedef struct {
  */
 typedef struct {
 	char ID[4]; // "fmt "
-	unsigned int chunkSize; // should be 16
-	unsigned short wFmtTag; // 0x01 for PCM - other modes unsupported
-	unsigned short wChannels; // number of channels (1 mono, 2 stereo)
-	unsigned int dwSamplesPerSec; // e.g. 44100
-	unsigned int dwBytesPerSec;   // e.g. 4*44100
-	unsigned short wBlockAlign; // bytes per sample (all channels, e.g. 4)
-	unsigned short wBitsPerSample; // bits per sample and channel, e.g. 16
+	unsigned int   chunkSize;       // should be 16
+	unsigned short wFmtTag;         // 0x01 for PCM - other modes unsupported
+	unsigned short wChannels;       // number of channels (1 mono, 2 stereo)
+	unsigned int   dwSamplesPerSec; // e.g. 44100
+	unsigned int   dwBytesPerSec;   // e.g. 4*44100
+	unsigned short wBlockAlign;     // bytes per sample (all channels, e.g. 4)
+	unsigned short wBitsPerSample;  // bits per sample and channel, e.g. 16
 } FMT_DATA;
 
 /* Chunk header for any chunk type in IFF format

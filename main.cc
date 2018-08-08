@@ -15,7 +15,7 @@
 #include "lame.h"
 #include "wave.h"
 
-static pthread_mutex_t mutex_finished = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mutex_pthrd = PTHREAD_MUTEX_INITIALIZER;
 
 using namespace std;
 
@@ -63,11 +63,11 @@ void *lame_encoder(void* arg)
 	int ret;
 	ENC_ARGS *args = (ENC_ARGS*)arg;
 
-	while (true) {
+	while (1) {
 		bool wflag = false;
 		int file_id = -1;
 
-		pthread_mutex_lock(&mutex_finished);
+		pthread_mutex_lock(&mutex_pthrd);
 
 		for (int i = 0; i < args->num_files; i++) {
 			if (!args->flag_enc[i]) {
@@ -78,7 +78,7 @@ void *lame_encoder(void* arg)
 			}
 		}
 
-		pthread_mutex_unlock(&mutex_finished);
+		pthread_mutex_unlock(&mutex_pthrd);
 
 		if (!wflag)
 			return NULL; // break
@@ -107,7 +107,7 @@ void *lame_encoder(void* arg)
 
 		ret = lame_init_params(gfp);
 		if (ret != 0) {
-			fprintf(stderr, "Invalid encoding parameters! Skipping file.\n\n");
+			fprintf(stderr, "Invalid encoding parameters! Skipping.\n\n");
 			continue;
 		}
 
@@ -121,7 +121,7 @@ void *lame_encoder(void* arg)
 
         if (!(mp3size > 0)) {
             free(mp3Buffer);
-            fprintf(stderr, "No data was encoded by lame_encode_buffer. Return code: %d\n", mp3size);
+            fprintf(stderr, "No data was encoded. Return code: %d\n", mp3size);
             fprintf(stderr, "Unable to encode mp3: %s\n\n", mp3_filename);
             continue;
         }
@@ -155,7 +155,7 @@ void *lame_encoder(void* arg)
 int main(int argc, char **argv)
 {
      // use all available CPU cores for the encoding process in an efficient way by utilizing multi-threading
-#ifndef WIN32
+#ifdef WIN32
 	int nprocs = get_nprocs();
 #else
 	int nprocs = 2;
@@ -179,25 +179,25 @@ int main(int argc, char **argv)
 	for (int i = 0; i < nfiles; i++) flag_enc[i] = false;
 
 
-	// initialize threads array and argument arrays
-	pthread_t *threads = new pthread_t[nprocs];
-	ENC_ARGS *threadArgs = (ENC_ARGS*)malloc(nprocs * sizeof(ENC_ARGS));
+	// initialize thread array and argument arrays
+	pthread_t *thread = new pthread_t[nprocs];
+	ENC_ARGS *enc_args = (ENC_ARGS*)malloc(nprocs * sizeof(ENC_ARGS));
 	for (int i = 0; i < nprocs; i++) {
-		threadArgs[i].num_files = nfiles;
-		threadArgs[i].file_name = &wavfiles;
-		threadArgs[i].flag_enc = flag_enc;
-		threadArgs[i].th_id = i;
-		threadArgs[i].num_enc = 0;
+		enc_args[i].num_files = nfiles;
+		enc_args[i].file_name = &wavfiles;
+		enc_args[i].flag_enc = flag_enc;
+		enc_args[i].th_id = i;
+		enc_args[i].num_enc = 0;
 	}
 
 	clock_t start_clk = clock();
 
 	for (int i = 0; i < nprocs; i++) {
-		pthread_create(&threads[i], NULL, lame_encoder, (void*)&threadArgs[i]);
+		pthread_create(&thread[i], NULL, lame_encoder, (void*)&enc_args[i]);
 	}
 
 	for (int i = 0; i < nprocs; i++) {
-		int ret = pthread_join(threads[i], NULL);
+		int ret = pthread_join(thread[i], NULL);
 		if (ret != 0) printf("\tpthread error occured!!!\n");
 	}
     printf("\n");
@@ -206,14 +206,14 @@ int main(int argc, char **argv)
 
 	int iProcessedTotal = 0;
 	for (int i = 0; i < nprocs; i++) {
-		printf("Thread %d processed %d files.\n", i, threadArgs[i].num_enc);
-		iProcessedTotal += threadArgs[i].num_enc;
+		printf("Thread %d processed %d files.\n", i, enc_args[i].num_enc);
+		iProcessedTotal += enc_args[i].num_enc;
 	}
 
 	printf("\nEncoded %d out of %d files in total in %g sec.\n", iProcessedTotal, nfiles, double(end_clk - start_clk) / CLOCKS_PER_SEC);
 
-	free(threads);
-	free(threadArgs);
+	free(thread);
+	free(enc_args);
 
 	if (iProcessedTotal > nfiles) return 1;
 
